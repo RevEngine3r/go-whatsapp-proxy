@@ -4,6 +4,7 @@
 | Name | Path | Status |
 |------|------|--------|
 | Project Initialization | / | Completed |
-| Core Proxy Engine | /proxy | Pending |
-| TLS & Port Mapping | / | Pending |
-| Documentation | /README.md | Pending |
+| Core Proxy Engine | /main.go | Completed |
+| TLS & Port Mapping | /main.go | Completed |
+| SOCKS5 Upstream | /main.go | Completed |
+| Documentation | /README.md | Completed |

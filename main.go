@@ -6,8 +6,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
-	"strings"
 	"sync"
 
 	"golang.org/x/net/proxy"
@@ -16,12 +16,13 @@ import (
 type Config struct {
 	Socks5Upstream string
 	ListenAddr     string
+	StatsPort      int
 }
 
 type Backend struct {
-	Target      string
-	SendProxy   bool
-	IsTLS       bool
+	Target    string
+	SendProxy bool
+	IsTLS     bool
 }
 
 var backends = map[int]Backend{
@@ -36,6 +37,7 @@ func main() {
 	cfg := Config{
 		Socks5Upstream: os.Getenv("SOCKS5_PROXY"),
 		ListenAddr:     os.Getenv("LISTEN_ADDR"),
+		StatsPort:      8199,
 	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = "0.0.0.0"
@@ -55,6 +57,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to generate cert: %v", err)
 	}
+
+	// Stats endpoint
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "WhatsApp Proxy (Go) is running.\n")
+		})
+		statsAddr := fmt.Sprintf("%s:%d", cfg.ListenAddr, cfg.StatsPort)
+		log.Printf("Stats server listening on %s", statsAddr)
+		if err := http.ListenAndServe(statsAddr, mux); err != nil {
+			log.Printf("stats server error: %v", err)
+		}
+	}()
 
 	var wg sync.WaitGroup
 	for port, backend := range backends {
@@ -103,12 +118,14 @@ func handleConnection(clientConn net.Conn, b Backend, dialer proxy.Dialer) {
 	defer targetConn.Close()
 
 	if b.SendProxy {
-		// Simple PROXY v1 header: PROXY TCP4 <src_ip> <dst_ip> <src_port> <dst_port>\r\n
-		srcAddr := clientConn.RemoteAddr().(*net.TCPAddr)
-		dstAddr := clientConn.LocalAddr().(*net.TCPAddr)
-		proxyHeader := fmt.Sprintf("PROXY TCP4 %s %s %d %d\r\n",
-			srcAddr.IP.String(), dstAddr.IP.String(), srcAddr.Port, dstAddr.Port)
-		targetConn.Write([]byte(proxyHeader))
+		// PROXY v1 header
+		srcAddr, ok1 := clientConn.RemoteAddr().(*net.TCPAddr)
+		dstAddr, ok2 := clientConn.LocalAddr().(*net.TCPAddr)
+		if ok1 && ok2 {
+			proxyHeader := fmt.Sprintf("PROXY TCP4 %s %s %d %d\r\n",
+				srcAddr.IP.String(), dstAddr.IP.String(), srcAddr.Port, dstAddr.Port)
+			targetConn.Write([]byte(proxyHeader))
+		}
 	}
 
 	errChan := make(chan error, 2)
