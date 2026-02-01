@@ -1,0 +1,22 @@
+socks5_proxy: ""
+listen_addr: "0.0.0.0"
+stats_port: 8199
+# Port mappings: port_number: { target: "address:port", send_proxy: true/false, is_tls: true/false }
+# The defaults below match WhatsApp's standard requirements.
+ports:
+  80:
+    target: "g.whatsapp.net:80"
+    send_proxy: true
+  443:
+    target: "g.whatsapp.net:5222"
+    send_proxy: true
+    is_tls: true
+  5222:
+    target: "g.whatsapp.net:5222"
+    send_proxy: true
+  587:
+    target: "whatsapp.net:443"
+    send_proxy: false
+  7777:
+    target: "whatsapp.net:443"
+    send_proxy: false

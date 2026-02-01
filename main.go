@@ -11,37 +11,61 @@ import (
 	"sync"
 
 	"golang.org/x/net/proxy"
+	"gopkg.in/yaml.v3"
 )
 
-type Config struct {
-	Socks5Upstream string
-	ListenAddr     string
-	StatsPort      int
-}
-
 type Backend struct {
-	Target    string
-	SendProxy bool
-	IsTLS     bool
+	Target    string `yaml:"target"`
+	SendProxy bool   `yaml:"send_proxy"`
+	IsTLS     bool   `yaml:"is_tls"`
 }
 
-var backends = map[int]Backend{
-	80:   {Target: "g.whatsapp.net:80", SendProxy: true},
-	443:  {Target: "g.whatsapp.net:5222", SendProxy: true, IsTLS: true},
-	5222: {Target: "g.whatsapp.net:5222", SendProxy: true},
-	587:  {Target: "whatsapp.net:443", SendProxy: false},
-	7777: {Target: "whatsapp.net:443", SendProxy: false},
+type Config struct {
+	Socks5Upstream string             `yaml:"socks5_proxy"`
+	ListenAddr     string             `yaml:"listen_addr"`
+	StatsPort      int                `yaml:"stats_port"`
+	Ports          map[int]Backend    `yaml:"ports"`
+}
+
+func loadConfig() Config {
+	// Default values
+	cfg := Config{
+		ListenAddr: "0.0.0.0",
+		StatsPort:  8199,
+		Ports: map[int]Backend{
+			80:   {Target: "g.whatsapp.net:80", SendProxy: true},
+			443:  {Target: "g.whatsapp.net:5222", SendProxy: true, IsTLS: true},
+			5222: {Target: "g.whatsapp.net:5222", SendProxy: true},
+			587:  {Target: "whatsapp.net:443", SendProxy: false},
+			7777: {Target: "whatsapp.net:443", SendProxy: false},
+		},
+	}
+
+	// Try loading from YAML
+	f, err := os.Open("config.yml")
+	if err == nil {
+		defer f.Close()
+		decoder := yaml.NewDecoder(f)
+		if err := decoder.Decode(&cfg); err != nil {
+			log.Printf("Warning: failed to parse config.yml: %v", err)
+		} else {
+			log.Println("Loaded configuration from config.yml")
+		}
+	}
+
+	// Override with Env vars if present
+	if envSocks := os.Getenv("SOCKS5_PROXY"); envSocks != "" {
+		cfg.Socks5Upstream = envSocks
+	}
+	if envListen := os.Getenv("LISTEN_ADDR"); envListen != "" {
+		cfg.ListenAddr = envListen
+	}
+
+	return cfg
 }
 
 func main() {
-	cfg := Config{
-		Socks5Upstream: os.Getenv("SOCKS5_PROXY"),
-		ListenAddr:     os.Getenv("LISTEN_ADDR"),
-		StatsPort:      8199,
-	}
-	if cfg.ListenAddr == "" {
-		cfg.ListenAddr = "0.0.0.0"
-	}
+	cfg := loadConfig()
 
 	var dialer proxy.Dialer = proxy.Direct
 	if cfg.Socks5Upstream != "" {
@@ -58,7 +82,6 @@ func main() {
 		log.Fatalf("failed to generate cert: %v", err)
 	}
 
-	// Stats endpoint
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +95,7 @@ func main() {
 	}()
 
 	var wg sync.WaitGroup
-	for port, backend := range backends {
+	for port, backend := range cfg.Ports {
 		wg.Add(1)
 		go func(p int, b Backend) {
 			defer wg.Done()
@@ -118,7 +141,6 @@ func handleConnection(clientConn net.Conn, b Backend, dialer proxy.Dialer) {
 	defer targetConn.Close()
 
 	if b.SendProxy {
-		// PROXY v1 header
 		srcAddr, ok1 := clientConn.RemoteAddr().(*net.TCPAddr)
 		dstAddr, ok2 := clientConn.LocalAddr().(*net.TCPAddr)
 		if ok1 && ok2 {
